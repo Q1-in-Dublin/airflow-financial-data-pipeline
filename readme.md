@@ -1,5 +1,3 @@
-/
-
 Readme · MD
 
 # Airflow Financial Data Pipeline
