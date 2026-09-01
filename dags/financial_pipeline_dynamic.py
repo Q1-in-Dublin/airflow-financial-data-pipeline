@@ -7,42 +7,25 @@ DATA_DIR = "/opt/airflow/data"
 POSTGRES_CONN_ID = "financial_pipeline_db"
 
 @dag(
-    dag_id="financial_pipeline",
+    dag_id="financial_pipeline_dynamic", 
     start_date=datetime(2026, 8, 1),
     schedule=None,
     catchup=False,
-    tags=["portfolio", "financial-etl"],
+    tags=["portfolio", "financial-etl", "dynamic-mapping"],
 )
-def financial_pipeline():
+def financial_pipeline_dynamic():
 
     @task
     def list_files():
-        files = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+        all_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+
+        files = [
+            f for f in all_files
+            if not f.startswith(("clean_", "rejected_", "cleantransactions"))
+    ]
         print(f"File Found: {files}")
         return files
 
-    # @task
-    # def pick_first_file(files: list):
-    #     first = sorted(files)[0]   # 정렬해서 첫 번째 (순서 일관성 위해)
-    #     print(f"Selected File: {first}")
-    #     return first
-    @task
-    def pick_target_file(files: list):
-        target = "transactions_dirty.csv"
-        assert target in files, f"{target} No exists: {files}"
-        print(f"Selected File: {target}")
-        return target
-
-    # @task
-    # def extract(filename: str):
-    #     path = os.path.join(DATA_DIR, filename)
-    #     df = pd.read_csv(path)
-    #     print(f"{filename}: {len(df)} loaded")
-    #     return {
-    #         "filename": filename,
-    #         "row_count": len(df),
-    #         "columns": list(df.columns),
-    #     }
     @task
     def extract(filename: str):
         path = os.path.join(DATA_DIR, filename)
@@ -70,9 +53,8 @@ def financial_pipeline():
             "negative_amount": int((df["amount"] < 0).sum()),
         }
 
-        print(f"validation report: {report}")
+        print(f"Validation Report: {report}")
 
-        # 명시적 XCom push: report 전체를 별도 key로 저장
         ti = context["ti"]
         ti.xcom_push(key="validation_report", value=report)
 
@@ -85,15 +67,11 @@ def financial_pipeline():
         df = pd.read_csv(path)
 
         before = len(df)
-        # remove rows customer_id is null
-        #df = df.dropna(subset=["amount", "customer_id"])
         is_bad = df["amount"].isna() | df["customer_id"].isna() | (df["amount"] < 0)
 
         good_df = df[~is_bad].copy()
         bad_df = df[is_bad].copy()
         bad_df["rejection_reason"] = "missing_or_negative_amount"
-        # remove weird amount (only positive)
-        # df = df[df["amount"] >= 0]
 
         print(f"Before Filtered: {before}rows → Normal: {len(good_df)}rows, rejexted: {len(bad_df)}row")
 
@@ -104,38 +82,35 @@ def financial_pipeline():
         bad_df.to_csv(os.path.join(DATA_DIR, rejected_filename), index=False)
 
         return {"clean": clean_filename, "rejected": rejected_filename}
-        # cleaned_filename = f"clean{filename}"
-        # clean_path = os.path.join(DATA_DIR, cleaned_filename)
-        # df.to_csv(clean_path, index=False)
-
-        # return cleaned_filename
 
     @task
-    def load(file_info: dict):
+    def load_all(file_info: list):
         from airflow.providers.postgres.hooks.postgres import PostgresHook
 
         hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
         engine = hook.get_sqlalchemy_engine()
 
-        # normal data : append (accumulating)
-        clean_path = os.path.join(DATA_DIR, file_info["clean"])
-        clean_df = pd.read_csv(clean_path)
-        clean_df.to_sql("transactions", engine, if_exists="append", index=False)
-        print(f" {len(clean_df)}rows loaded(append) in transactions table")
+        total_clean = 0
+        total_rejected = 0
+        for info in file_info:
+            clean_path = os.path.join(DATA_DIR, info["clean"])
+            clean_df = pd.read_csv(clean_path)
+            
+            if len(clean_df) > 0:
+                clean_df.to_sql("transactions", engine, if_exists="append", index=False)
+                total_clean += len(clean_df)
 
-        # Rejected data : append to seperate table
-        rejected_path = os.path.join(DATA_DIR, file_info["rejected"])
-        rejected_df = pd.read_csv(rejected_path)
-        if len(rejected_df) > 0:
-            rejected_df.to_sql("rejected_transactions", engine, if_exists="append", index=False)
-            print(f" {len(rejected_df)}rows loaded in rejected_transactions table")
+            rejected_path = os.path.join(DATA_DIR, info["rejected"])
+            rejected_df = pd.read_csv(rejected_path)
+            if len(rejected_df) > 0:
+                rejected_df.to_sql("rejected_transactions", engine, if_exists="append", index=False)
+                total_rejected += len(rejected_df)
 
     files = list_files()
-    target_file = pick_target_file(files)
-    extracted = extract(target_file)
-    validated = validate(extracted)
-    cleaned = transform(validated)
-    load(cleaned)
+    extracted = extract.expand(filename=files)
+    validated = validate.expand(filename=extracted)
+    transformed = transform.expand(filename=validated)
+    load_all(transformed)
 
 
-financial_pipeline()
+financial_pipeline_dynamic() 
