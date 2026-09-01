@@ -183,3 +183,10 @@ This project was built over a condensed 8-day self-study plan covering:
 5. Explicit XCom usage and splitting output into clean vs. rejected data stores
 6. Dynamic Task Mapping, Sensors, and Backfill/Catchup — verified with `financial_pipeline_dynamic`, `sensor_demo`, and `backfill_demo`
    Along the way, this also involved troubleshooting real-world issues: Docker volume mounts, `venv`/`PATH` conflicts, Git repository scope mistakes, GitHub credential/authentication issues, connection configuration errors (e.g. a stray whitespace character in a hostname causing a DNS resolution failure), an accidentally committed secret (`fernet_key`) that required rewriting Git history, DAG files landing in the wrong directory or under a mismatched `dag_id`, and CLI argument names that shifted between Airflow versions — all fixed through log-driven debugging.
+
+## Roadmap: Quality Monitoring Agent (In Progress)
+
+Phase 2 adds an anomaly detection + LLM-based reporting agent on top of this pipeline.
+
+Design doc: [docs/quality-monitor-spec.md](docs/quality-monitor-spec.md)
+Working branch: `feature/quality-agent`
